@@ -1,0 +1,158 @@
+name: Build Swift Package
+description: >
+  Set up Swift toolchain, restore build cache with proper mtime normalization,
+  and build a Swift package with true incremental compilation.
+branding:
+  icon: box
+  color: orange
+
+inputs:
+  swift-version:
+    description: Swift toolchain version
+    default: "6.2"
+  path:
+    description: Path to the Swift package (contains Package.swift)
+    default: "."
+  ssh-key:
+    description: SSH private key for private GitHub dependency repos
+    required: false
+    default: ""
+  configuration:
+    description: "Build configuration: debug or release"
+    default: "release"
+  product:
+    description: Specific product to build (builds all by default)
+    required: false
+    default: ""
+  static-swift-stdlib:
+    description: Statically link the Swift standard library
+    default: "true"
+  extra-swift-flags:
+    description: Additional flags passed to swift build
+    required: false
+    default: ""
+  cache-key-prefix:
+    description: Cache key prefix for the .build directory
+    default: "swiftpm"
+  jemalloc:
+    description: Install and link jemalloc
+    default: "false"
+  build:
+    description: "Run swift build. Set to 'false' for setup-only (e.g. when running tests)."
+    default: "true"
+
+outputs:
+  cache-hit:
+    description: Whether the .build cache was an exact match
+    value: ${{ steps.build-cache.outputs.cache-hit }}
+  bin-path:
+    description: Absolute path to the build output directory
+    value: ${{ steps.build-info.outputs.bin-path }}
+
+runs:
+  using: composite
+  steps:
+    # ── Setup ──────────────────────────────────────────────────
+    - name: Configure SSH
+      if: inputs.ssh-key != ''
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ inputs.ssh-key }}
+
+    - name: Cache Swift toolchain
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.tool_cache }}/swift-Ubuntu
+        key: swift-toolchain-${{ inputs.swift-version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install Swift
+      shell: bash
+      run: |
+        SWIFT_VERSION="${{ inputs.swift-version }}"
+        SWIFT_BRANCH="swift-${SWIFT_VERSION}-release"
+        SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
+        UBUNTU_VERSION=$(. /etc/os-release && echo "${VERSION_ID}")
+        UBUNTU_LABEL="ubuntu${UBUNTU_VERSION}"
+        PLATFORM="ubuntu${UBUNTU_VERSION//./}"
+
+        TOOLCHAIN_DIR="${{ runner.tool_cache }}/swift-Ubuntu/${SWIFT_VERSION}"
+        if [[ -x "${TOOLCHAIN_DIR}/usr/bin/swift" ]]; then
+          echo "Swift ${SWIFT_VERSION} already cached"
+        else
+          BASE_URL="https://download.swift.org/${SWIFT_BRANCH}/${PLATFORM}/${SWIFT_TAG}"
+          TARBALL="${SWIFT_TAG}-${UBUNTU_LABEL}.tar.gz"
+          echo "Downloading ${BASE_URL}/${TARBALL}"
+
+          TMPDIR="$(mktemp -d)"
+          curl -fsSL "${BASE_URL}/${TARBALL}" -o "${TMPDIR}/${TARBALL}"
+          curl -fsSL "${BASE_URL}/${TARBALL}.sig" -o "${TMPDIR}/${TARBALL}.sig"
+
+          # Import Swift project signing keys and verify
+          curl -fsSL https://swift.org/keys/all-keys.asc | gpg --import -
+          gpg --batch --verify "${TMPDIR}/${TARBALL}.sig" "${TMPDIR}/${TARBALL}"
+
+          mkdir -p "${TOOLCHAIN_DIR}"
+          tar xzf "${TMPDIR}/${TARBALL}" --strip-components=1 -C "${TOOLCHAIN_DIR}"
+          rm -rf "${TMPDIR}"
+        fi
+
+        echo "${TOOLCHAIN_DIR}/usr/bin" >> "$GITHUB_PATH"
+        swift --version
+
+    - name: Cache SwiftPM .build directory
+      id: build-cache
+      uses: actions/cache@v5
+      with:
+        path: ${{ inputs.path }}/.build
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        restore-keys: |
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+
+    - name: Install jemalloc
+      if: inputs.jemalloc == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y --no-install-recommends libjemalloc-dev
+
+    # ── Resolve & Normalize ────────────────────────────────────
+    - name: Resolve dependencies
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: swift package resolve
+
+    - name: Normalize file timestamps for incremental builds
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: python3 "$GITHUB_ACTION_PATH/scripts/normalize-mtimes.py"
+
+    # ── Build ──────────────────────────────────────────────────
+    - name: Build
+      if: inputs.build == 'true'
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      env:
+        CONFIGURATION: ${{ inputs.configuration }}
+        PRODUCT: ${{ inputs.product }}
+        STATIC_STDLIB: ${{ inputs.static-swift-stdlib }}
+        JEMALLOC: ${{ inputs.jemalloc }}
+        EXTRA_FLAGS: ${{ inputs.extra-swift-flags }}
+      run: |
+        FLAGS=""
+        [[ "$STATIC_STDLIB" == "true" ]] && FLAGS+=" --static-swift-stdlib"
+        [[ -n "$PRODUCT" ]] && FLAGS+=" --product $PRODUCT"
+        [[ "$JEMALLOC" == "true" ]] && FLAGS+=" -Xlinker -ljemalloc"
+        swift build \
+          --configuration "$CONFIGURATION" \
+          $FLAGS \
+          $EXTRA_FLAGS
+
+    - name: Determine build output path
+      if: inputs.build == 'true'
+      id: build-info
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      env:
+        CONFIGURATION: ${{ inputs.configuration }}
+      run: echo "bin-path=$(swift build -c "$CONFIGURATION" --show-bin-path)" >> "$GITHUB_OUTPUT"

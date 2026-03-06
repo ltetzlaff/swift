@@ -1,0 +1,52 @@
+name: Test Swift Package
+
+on:
+  workflow_call:
+    inputs:
+      swift-version:
+        type: string
+        default: "6.2"
+      path:
+        description: Path to the Swift package (contains Package.swift)
+        type: string
+        default: "."
+      extra-swift-flags:
+        description: Additional flags passed to swift test
+        type: string
+        default: ""
+      jemalloc:
+        description: Install libjemalloc-dev
+        type: boolean
+        default: true
+      runs-on:
+        description: Runner label
+        type: string
+        default: "ubuntu-latest"
+      timeout-minutes:
+        type: number
+        default: 30
+    secrets:
+      ssh-key:
+        required: false
+
+jobs:
+  test:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./
+        with:
+          swift-version: ${{ inputs.swift-version }}
+          path: ${{ inputs.path }}
+          ssh-key: ${{ secrets.ssh-key }}
+          jemalloc: ${{ inputs.jemalloc && 'true' || 'false' }}
+          build: "false"
+
+      - name: Test
+        shell: bash
+        working-directory: ${{ inputs.path }}
+        env:
+          EXTRA_FLAGS: ${{ inputs.extra-swift-flags }}
+        run: swift test $EXTRA_FLAGS

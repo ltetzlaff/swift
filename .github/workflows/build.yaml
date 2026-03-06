@@ -1,0 +1,60 @@
+name: Build Swift Package
+
+on:
+  workflow_call:
+    inputs:
+      swift-version:
+        type: string
+        default: "6.2"
+      path:
+        description: Path to the Swift package (contains Package.swift)
+        type: string
+        default: "."
+      configuration:
+        description: "Build configuration: debug or release"
+        type: string
+        default: "release"
+      product:
+        description: Specific product to build (builds all by default)
+        type: string
+        default: ""
+      static-swift-stdlib:
+        description: Statically link the Swift standard library
+        type: boolean
+        default: true
+      extra-swift-flags:
+        description: Additional flags passed to swift build
+        type: string
+        default: ""
+      jemalloc:
+        description: Install and link jemalloc
+        type: boolean
+        default: true
+      runs-on:
+        description: Runner label
+        type: string
+        default: "ubuntu-latest"
+      timeout-minutes:
+        type: number
+        default: 30
+    secrets:
+      ssh-key:
+        required: false
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./
+        with:
+          swift-version: ${{ inputs.swift-version }}
+          path: ${{ inputs.path }}
+          ssh-key: ${{ secrets.ssh-key }}
+          configuration: ${{ inputs.configuration }}
+          product: ${{ inputs.product }}
+          static-swift-stdlib: ${{ inputs.static-swift-stdlib && 'true' || 'false' }}
+          extra-swift-flags: ${{ inputs.extra-swift-flags }}
+          jemalloc: ${{ inputs.jemalloc && 'true' || 'false' }}
