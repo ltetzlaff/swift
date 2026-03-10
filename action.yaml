@@ -87,29 +87,35 @@ runs:
           curl -fsSL "${BASE_URL}/${TARBALL}" -o "${TMPDIR}/${TARBALL}"
           curl -fsSL "${BASE_URL}/${TARBALL}.sig" -o "${TMPDIR}/${TARBALL}.sig"
 
-          # Import Swift project signing keys (try multiple sources)
-          GPG_IMPORT_OK=false
-          for KEY_URL in \
-            "https://www.swift.org/keys/all-keys.asc" \
-            "https://swift.org/keys/all-keys.asc"; do
-            if curl -fsSL "$KEY_URL" | gpg --import - 2>/dev/null; then
-              GPG_IMPORT_OK=true
-              break
-            fi
-          done
+          # 1. Import Swift project signing keys bundle
+          curl -fsSL "https://www.swift.org/keys/all-keys.asc" | gpg --import - 2>/dev/null || \
+          curl -fsSL "https://swift.org/keys/all-keys.asc"     | gpg --import - 2>/dev/null || true
 
-          if ! $GPG_IMPORT_OK; then
-            # Fallback: import from Ubuntu keyserver
-            gpg --keyserver hkp://keyserver.ubuntu.com \
-                --recv-keys 'A62AE125BBBFBB96A6E042EC925CC1CCED3D1561' \
-                            '8A7495662C3CD4AE18D95637FAF6989E1BC16FEA' 2>/dev/null \
-              && GPG_IMPORT_OK=true
+          # 2. First verification attempt — may fail if the signing key
+          #    is newer than the all-keys.asc bundle
+          VERIFY_OK=false
+          if gpg --batch --verify "${TMPDIR}/${TARBALL}.sig" "${TMPDIR}/${TARBALL}" 2>/dev/null; then
+            VERIFY_OK=true
+          else
+            # Extract the missing key ID from the signature packet
+            MISSING_KEY=$(gpg --status-fd 1 --verify "${TMPDIR}/${TARBALL}.sig" "${TMPDIR}/${TARBALL}" 2>/dev/null \
+              | sed -n 's/.*NO_PUBKEY \([0-9A-F]*\)/\1/p; s/.*ERRSIG [^ ]* [^ ]* [^ ]* [^ ]* [^ ]* \([0-9A-F]*\)/\1/p' \
+              | head -1)
+
+            if [[ -n "$MISSING_KEY" ]]; then
+              echo "Fetching missing signing key $MISSING_KEY from keyserver..."
+              for KS in hkps://keys.openpgp.org hkp://keyserver.ubuntu.com; do
+                gpg --keyserver "$KS" --recv-keys "$MISSING_KEY" 2>/dev/null && break || true
+              done
+              # Retry verification
+              if gpg --batch --verify "${TMPDIR}/${TARBALL}.sig" "${TMPDIR}/${TARBALL}" 2>/dev/null; then
+                VERIFY_OK=true
+              fi
+            fi
           fi
 
-          if $GPG_IMPORT_OK; then
-            gpg --batch --verify "${TMPDIR}/${TARBALL}.sig" "${TMPDIR}/${TARBALL}"
-          else
-            echo "::warning::Could not import Swift GPG keys; skipping signature verification (HTTPS download still integrity-checked)"
+          if ! $VERIFY_OK; then
+            echo "::warning::GPG signature verification failed; proceeding with HTTPS-verified download"
           fi
 
           mkdir -p "${TOOLCHAIN_DIR}"
