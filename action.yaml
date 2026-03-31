@@ -115,11 +115,16 @@ runs:
           ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
           ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
 
+    - name: Install system build dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
+
     - name: Install jemalloc
       if: inputs.jemalloc == 'true'
       shell: bash
       run: |
-        sudo apt-get update -q
         sudo apt-get install -y --no-install-recommends libjemalloc-dev
 
     # ── Resolve & Normalize ────────────────────────────────────
