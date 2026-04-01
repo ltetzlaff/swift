@@ -169,8 +169,8 @@ runs:
       run: echo "bin-path=$(swift build -c "$CONFIGURATION" --show-bin-path)" >> "$GITHUB_OUTPUT"
 
     - name: Save SwiftPM .build cache
-      if: always()
+      if: always() && steps.build-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v5
       with:
         path: ${{ inputs.path }}/.build
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        key: ${{ steps.build-cache.outputs.cache-primary-key }}
