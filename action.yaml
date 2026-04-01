@@ -105,9 +105,9 @@ runs:
         echo "${TOOLCHAIN_DIR}/usr/bin" >> "$GITHUB_PATH"
         swift --version
 
-    - name: Cache SwiftPM .build directory
+    - name: Restore SwiftPM .build cache
       id: build-cache
-      uses: actions/cache@v5
+      uses: actions/cache/restore@v5
       with:
         path: ${{ inputs.path }}/.build
         key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
@@ -167,3 +167,10 @@ runs:
       env:
         CONFIGURATION: ${{ inputs.configuration }}
       run: echo "bin-path=$(swift build -c "$CONFIGURATION" --show-bin-path)" >> "$GITHUB_OUTPUT"
+
+    - name: Save SwiftPM .build cache
+      if: inputs.build == 'true' && steps.build-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ inputs.path }}/.build
+        key: ${{ steps.build-cache.outputs.cache-primary-key }}
