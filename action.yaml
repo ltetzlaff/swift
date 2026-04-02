@@ -75,6 +75,12 @@ runs:
         UBUNTU_LABEL="ubuntu${UBUNTU_VERSION}"
         PLATFORM="ubuntu${UBUNTU_VERSION//./}"
 
+        ARCH=$(uname -m)
+        if [[ "$ARCH" == "aarch64" ]]; then
+          PLATFORM="${PLATFORM}-aarch64"
+          UBUNTU_LABEL="${UBUNTU_LABEL}-aarch64"
+        fi
+
         TOOLCHAIN_DIR="${{ runner.tool_cache }}/swift-Ubuntu/${SWIFT_VERSION}"
         if [[ -x "${TOOLCHAIN_DIR}/usr/bin/swift" ]]; then
           echo "Swift ${SWIFT_VERSION} already cached"
@@ -110,10 +116,10 @@ runs:
       uses: actions/cache/restore@v5
       with:
         path: ${{ inputs.path }}/.build
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
         restore-keys: |
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Install system build dependencies
       shell: bash
