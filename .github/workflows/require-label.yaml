@@ -10,8 +10,17 @@ jobs:
     permissions:
       pull-requests: read
     steps:
-      - uses: mheap/github-action-required-labels@v5
-        with:
-          mode: exactly
-          count: 1
-          labels: "major, minor, patch"
+      - name: Require exactly one version label
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          count=0
+          for label in major minor patch; do
+            if echo ",$LABELS," | grep -qi ",$label,"; then
+              count=$((count + 1))
+            fi
+          done
+          if [ "$count" -ne 1 ]; then
+            echo "::error::PR must have exactly one of the labels: major, minor, patch (found $count)"
+            exit 1
+          fi
