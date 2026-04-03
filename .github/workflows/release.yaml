@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine bump type from PR labels
+        id: bump
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          BUMP=patch
+          for label in major minor patch; do
+            if echo ",$LABELS," | grep -qi ",$label,"; then
+              BUMP=$label
+              break
+            fi
+          done
+          echo "type=$BUMP" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version and push tag
+        id: tag
+        env:
+          BUMP: ${{ steps.bump.outputs.type }}
+        run: |
+          # Find the latest semver tag
+          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+
+          # Parse version components
+          VERSION="${LATEST#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          NEW_TAG="v${NEW_VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_TAG" -m "$NEW_TAG"
+          git push origin "$NEW_TAG"
+
+          echo "new_tag=$NEW_TAG"         >> "$GITHUB_OUTPUT"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
+        run: |
+          # Get the previous tag (second-to-last)
+          PREV_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n2 | head -n1)
+          if [ "$PREV_TAG" = "$NEW_TAG" ]; then
+            PREV_TAG=""
+          fi
+
+          if [ -n "$PREV_TAG" ]; then
+            LOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+          else
+            LOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Write multi-line output
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$LOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.tag.outputs.new_tag }}" \
+            --title "${{ steps.tag.outputs.new_tag }}" \
+            --notes "${{ steps.changelog.outputs.body }}"
+
+      - name: Update major version tag
+        # Keeps the floating tag (e.g. v1) pointing to latest — required because
+        # consumers of this Action reference it as ltetzlaff/swift@v1
+        run: |
+          MAJOR_TAG="v$(echo "${{ steps.tag.outputs.new_version }}" | cut -d. -f1)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$MAJOR_TAG" -m "Update $MAJOR_TAG to ${{ steps.tag.outputs.new_tag }}"
+          git push origin "$MAJOR_TAG" --force
