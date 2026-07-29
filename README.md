@@ -100,8 +100,8 @@ That's it. Installs Swift, resolves dependencies, normalizes timestamps, and bui
 ## How Caching Works
 
 1. **Swift toolchain** — cached by version + OS + arch
-2. **SwiftPM `.build` directory** — cached by `Package.resolved` hash + commit SHA, with fallback keys for partial reuse
-3. **Mtime normalization** — file timestamps are set to deterministic content-based hashes so llbuild sees unchanged files as unchanged
+2. **SwiftPM `.build` directory** — cached by `Package.resolved` hash + commit SHA. An earlier commit's cache is reused only when the `Package.resolved` hash matches: a `.build` from a different dependency graph would link stale objects against freshly compiled dependencies, so a changed graph always builds cold.
+3. **Mtime normalization** — file timestamps are set to deterministic content-based hashes so llbuild sees unchanged files as unchanged. Stamps always land in the past (a fixed 40-year window before 2020) so that no source ever appears newer than the outputs built from it.
 
 ## License
 
