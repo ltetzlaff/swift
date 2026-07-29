@@ -55,12 +55,12 @@ runs:
     # ── Setup ──────────────────────────────────────────────────
     - name: Configure SSH
       if: inputs.ssh-key != ''
-      uses: webfactory/ssh-agent@v0.7.0
+      uses: webfactory/ssh-agent@v0.10.0
       with:
         ssh-private-key: ${{ inputs.ssh-key }}
 
     - name: Cache Swift toolchain
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: ${{ runner.tool_cache }}/swift-Ubuntu
         key: swift-toolchain-${{ inputs.swift-version }}-${{ runner.os }}-${{ runner.arch }}
@@ -114,13 +114,15 @@ runs:
 
     - name: Restore SwiftPM .build cache
       id: build-cache
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: ${{ inputs.path }}/.build
         key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        # Only ever fall back within one Package.resolved. A .build from a
+        # different dependency graph links stale objects against freshly
+        # compiled dependencies — a changed graph must build cold.
         restore-keys: |
           ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-
 
     - name: Install system build dependencies
       shell: bash
@@ -177,7 +179,7 @@ runs:
 
     - name: Save SwiftPM .build cache
       if: inputs.build == 'true' && steps.build-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: ${{ inputs.path }}/.build
         key: ${{ steps.build-cache.outputs.cache-primary-key }}
