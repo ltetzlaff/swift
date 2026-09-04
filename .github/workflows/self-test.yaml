@@ -1,0 +1,42 @@
+name: Self test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Shellcheck scripts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck scripts/*.sh tests/*.sh
+
+      - name: Recovery decision tests
+        run: bash tests/build-with-recovery.test.sh
+
+      - name: Mtime stamps land in the past
+        run: |
+          python3 - <<'PY'
+          import subprocess, os, tempfile, time
+          # normalize-mtimes.py only walks known package dirs, so build one.
+          d = tempfile.mkdtemp()
+          os.makedirs(os.path.join(d, "Sources", "Foo"))
+          for i in range(5):
+              with open(os.path.join(d, "Sources", "Foo", f"f{i}.swift"), "w") as f:
+                  f.write(f"let x{i} = {i}\n")
+          open(os.path.join(d, "Package.swift"), "w").write("// swift-tools-version:6.0\n")
+          script = os.path.join(os.getcwd(), "scripts", "normalize-mtimes.py")
+          subprocess.run(["python3", script], cwd=d, check=True)
+          now = time.time()
+          for root, _, files in os.walk(os.path.join(d, "Sources")):
+              for name in files:
+                  p = os.path.join(root, name)
+                  assert os.path.getmtime(p) < now, f"{p} is not stamped in the past"
+          print("all stamps in the past")
+          PY
