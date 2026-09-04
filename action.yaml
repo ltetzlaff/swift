@@ -34,6 +34,13 @@ inputs:
   cache-key-prefix:
     description: Cache key prefix for the .build directory
     default: "swiftpm"
+  cache-suffix:
+    description: >
+      Opaque string folded into the .build cache key. Change it to abandon every
+      existing cache for this prefix and build cold — an escape hatch for when a
+      cache is suspected bad and you would otherwise delete it through the API.
+    required: false
+    default: ""
   jemalloc:
     description: Install and link jemalloc
     default: "false"
@@ -45,6 +52,11 @@ outputs:
   cache-hit:
     description: Whether the .build cache was an exact match
     value: ${{ steps.build-cache.outputs.cache-hit }}
+  cache-recovered:
+    description: >
+      Whether a restored .build turned out to be stale and was discarded for a
+      cold rebuild. 'true' means the build is green but took the slow path.
+    value: ${{ steps.build.outputs.recovered }}
   bin-path:
     description: Absolute path to the build output directory
     value: ${{ steps.build-info.outputs.bin-path }}
@@ -117,12 +129,19 @@ runs:
       uses: actions/cache/restore@v6
       with:
         path: ${{ inputs.path }}/.build
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
         # Only ever fall back within one Package.resolved. A .build from a
         # different dependency graph links stale objects against freshly
         # compiled dependencies — a changed graph must build cold.
+        #
+        # Within one graph the fallback still hands over a .build whose
+        # first-party objects predate this checkout. That is deliberate — it is
+        # what makes ordinary commits incremental — and the residual risk of a
+        # stale link is handled after the fact by scripts/build-with-recovery.sh
+        # rather than by narrowing this key, since first-party sources change on
+        # nearly every commit and keying on them would mean never reusing a cache.
         restore-keys: |
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
 
     - name: Install system build dependencies
       shell: bash
@@ -150,6 +169,7 @@ runs:
     # ── Build ──────────────────────────────────────────────────
     - name: Build
       if: inputs.build == 'true'
+      id: build
       shell: bash
       working-directory: ${{ inputs.path }}
       env:
@@ -158,15 +178,10 @@ runs:
         STATIC_STDLIB: ${{ inputs.static-swift-stdlib }}
         JEMALLOC: ${{ inputs.jemalloc }}
         EXTRA_FLAGS: ${{ inputs.extra-swift-flags }}
-      run: |
-        FLAGS=""
-        [[ "$STATIC_STDLIB" == "true" ]] && FLAGS+=" --static-swift-stdlib"
-        [[ -n "$PRODUCT" ]] && FLAGS+=" --product $PRODUCT"
-        [[ "$JEMALLOC" == "true" ]] && FLAGS+=" -Xlinker -ljemalloc"
-        swift build \
-          --configuration "$CONFIGURATION" \
-          $FLAGS \
-          $EXTRA_FLAGS
+        # Empty when this run built cold — the script only blames a cache it got.
+        CACHE_MATCHED_KEY: ${{ steps.build-cache.outputs.cache-matched-key }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/scripts/build-with-recovery.sh"
 
     - name: Determine build output path
       if: inputs.build == 'true'
