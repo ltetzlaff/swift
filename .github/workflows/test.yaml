@@ -29,10 +29,12 @@ on:
       ssh-key:
         required: false
 
+permissions: {}
+
 jobs:
   test:
     permissions:
-      contents: read
+      contents: read # check out the caller's package
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
@@ -40,7 +42,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./
+      - uses: $/
         with:
           swift-version: ${{ inputs.swift-version }}
           path: ${{ inputs.path }}

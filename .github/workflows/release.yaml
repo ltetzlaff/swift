@@ -1,13 +1,13 @@
 name: Release
 
+# Runs on the push a merged PR lands as, not on the PR event: a `pull_request`
+# run for a fork PR only ever gets a read-only token, and this keeps everything
+# that holds `contents: write` in the trusted context of main.
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: read
+permissions: {}
 
 concurrency:
   group: release
@@ -15,104 +15,90 @@ concurrency:
 
 jobs:
   tag:
-    if: github.event.pull_request.merged == true
+    name: Tag and release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release, its tag, and move the floating major tag
+      pull-requests: read # read the merged PR's version label
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Determine bump type from PR labels
+      - name: Find the merged PR and its version label
         id: bump
         env:
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
         run: |
-          BUMP=patch
+          PR=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
+            --jq 'map(select(.merged_at != null and .base.ref == "main")) | first | .number // empty')
+          if [[ -z "$PR" ]]; then
+            echo "::notice::${SHA} did not come from a merged PR; nothing to release."
+            exit 0
+          fi
+          LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '[.labels[].name] | join(",")')
+          BUMP="patch"
           for label in major minor patch; do
-            if echo ",$LABELS," | grep -qi ",$label,"; then
+            if [[ ",${LABELS,,}," == *",${label},"* ]]; then
               BUMP=$label
               break
             fi
           done
+          echo "PR #${PR} → ${BUMP}"
           echo "type=$BUMP" >> "$GITHUB_OUTPUT"
 
-      - name: Bump version and push tag
-        id: tag
+      - name: Compute version and changelog
+        id: version
+        if: steps.bump.outputs.type != ''
         env:
           BUMP: ${{ steps.bump.outputs.type }}
         run: |
-          # Find the latest semver tag
           LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1)
-          if [ -z "$LATEST" ]; then
-            LATEST="v0.0.0"
-          fi
-
-          # Parse version components
-          VERSION="${LATEST#v}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
+          LATEST="${LATEST:-v0.0.0}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
           case "$BUMP" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
             patch) PATCH=$((PATCH + 1)) ;;
           esac
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
 
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          NEW_TAG="v${NEW_VERSION}"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$NEW_TAG" -m "$NEW_TAG"
-          git push origin "$NEW_TAG"
-
-          echo "new_tag=$NEW_TAG"         >> "$GITHUB_OUTPUT"
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Generate changelog
-        id: changelog
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
-        run: |
-          # Get the previous tag (second-to-last)
-          PREV_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n2 | head -n1)
-          if [ "$PREV_TAG" = "$NEW_TAG" ]; then
-            PREV_TAG=""
-          fi
-
-          if [ -n "$PREV_TAG" ]; then
-            LOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+          if [[ "$LATEST" == "v0.0.0" ]]; then
+            git log --pretty=format:"- %s (%h)" --no-merges > "$RUNNER_TEMP/notes.md"
           else
-            LOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+            git log "${LATEST}..HEAD" --pretty=format:"- %s (%h)" --no-merges > "$RUNNER_TEMP/notes.md"
           fi
 
-          # Write multi-line output
           {
-            echo "body<<CHANGELOG_EOF"
-            echo "$LOG"
-            echo "CHANGELOG_EOF"
+            echo "new_tag=$NEW_TAG"
+            echo "major_tag=v${MAJOR}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release
+      # Commit subjects are attacker-controlled text from any merged PR, so the
+      # notes travel as a file and are never interpolated into a script.
+      - name: Create GitHub release and tag
+        if: steps.bump.outputs.type != ''
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
-          # Commit subjects are attacker-controlled text from any merged PR;
-          # pass them as data, never interpolate them into the script.
-          NOTES: ${{ steps.changelog.outputs.body }}
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ steps.version.outputs.new_tag }}
+          SHA: ${{ github.sha }}
         run: |
-          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
-          gh release create "$NEW_TAG" --title "$NEW_TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release create "$NEW_TAG" --target "$SHA" --title "$NEW_TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md"
 
       - name: Update major version tag
         # Keeps the floating tag (e.g. v1) pointing to latest — required because
         # consumers of this Action reference it as ltetzlaff/swift@v1
+        if: steps.bump.outputs.type != ''
         env:
-          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
-          NEW_VERSION: ${{ steps.tag.outputs.new_version }}
+          GH_TOKEN: ${{ github.token }}
+          MAJOR_TAG: ${{ steps.version.outputs.major_tag }}
+          SHA: ${{ github.sha }}
         run: |
-          MAJOR_TAG="v${NEW_VERSION%%.*}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -fa "$MAJOR_TAG" -m "Update $MAJOR_TAG to $NEW_TAG"
-          git push origin "$MAJOR_TAG" --force
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${MAJOR_TAG}" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${MAJOR_TAG}" -f sha="$SHA" -F force=true
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${MAJOR_TAG}" -f sha="$SHA"
+          fi

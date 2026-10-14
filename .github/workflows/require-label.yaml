@@ -6,11 +6,15 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check-label:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: read
+      pull-requests: read # labels come from the event payload; nothing else is read
     steps:
       - name: Require exactly one version label
         env:

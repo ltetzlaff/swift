@@ -12,3 +12,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    # Let a fresh release sit for a week before adopting it, so a compromised
+    # upstream tag has time to be noticed and yanked.
+    cooldown:
+      default-days: 7

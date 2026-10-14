@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scripts:
     runs-on: ubuntu-latest
@@ -21,6 +25,9 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends shellcheck
           shellcheck scripts/*.sh tests/*.sh
+
+      - name: Signature verification tests
+        run: bash tests/verify-signature.test.sh
 
       - name: Recovery decision tests
         run: bash tests/build-with-recovery.test.sh
@@ -60,7 +67,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./
+      - uses: $/
         id: swift
         with:
           path: tests/fixture
@@ -72,3 +79,19 @@ jobs:
         run: |
           swift --version
           "$BIN_PATH/Hello" | grep -qx 'hello from swift'
+
+  # Static security audit of action.yaml, the workflows and dependabot.yml:
+  # template injection, credential persistence, unpinned actions, excessive
+  # permissions. Any finding fails the PR.
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: 1.30.1
+          advanced-security: false
+          annotations: true
