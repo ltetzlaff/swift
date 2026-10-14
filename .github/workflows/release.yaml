@@ -18,7 +18,7 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -96,17 +96,23 @@ jobs:
       - name: Create GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
+          # Commit subjects are attacker-controlled text from any merged PR;
+          # pass them as data, never interpolate them into the script.
+          NOTES: ${{ steps.changelog.outputs.body }}
         run: |
-          gh release create "${{ steps.tag.outputs.new_tag }}" \
-            --title "${{ steps.tag.outputs.new_tag }}" \
-            --notes "${{ steps.changelog.outputs.body }}"
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release create "$NEW_TAG" --title "$NEW_TAG" --notes-file "$RUNNER_TEMP/notes.md"
 
       - name: Update major version tag
         # Keeps the floating tag (e.g. v1) pointing to latest — required because
         # consumers of this Action reference it as ltetzlaff/swift@v1
+        env:
+          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
+          NEW_VERSION: ${{ steps.tag.outputs.new_version }}
         run: |
-          MAJOR_TAG="v$(echo "${{ steps.tag.outputs.new_version }}" | cut -d. -f1)"
+          MAJOR_TAG="v${NEW_VERSION%%.*}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -fa "$MAJOR_TAG" -m "Update $MAJOR_TAG to ${{ steps.tag.outputs.new_tag }}"
+          git tag -fa "$MAJOR_TAG" -m "Update $MAJOR_TAG to $NEW_TAG"
           git push origin "$MAJOR_TAG" --force

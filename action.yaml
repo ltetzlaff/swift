@@ -70,20 +70,27 @@ runs:
     # ── Setup ──────────────────────────────────────────────────
     - name: Configure SSH
       if: inputs.ssh-key != ''
-      uses: webfactory/ssh-agent@v0.10.0
+      uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
       with:
         ssh-private-key: ${{ inputs.ssh-key }}
 
     - name: Cache Swift toolchain
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.tool_cache }}/swift-Ubuntu
         key: swift-toolchain-${{ inputs.swift-version }}-${{ runner.os }}-${{ runner.arch }}
 
     - name: Install Swift
       shell: bash
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+        TOOL_CACHE: ${{ runner.tool_cache }}
       run: |
-        SWIFT_VERSION="${{ inputs.swift-version }}"
+        # The version lands in URLs and paths; refuse anything but a release number.
+        if [[ ! "$SWIFT_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+          echo "::error::swift-version must look like 6.4.0, got '${SWIFT_VERSION}'"
+          exit 1
+        fi
         SWIFT_BRANCH="swift-${SWIFT_VERSION}-release"
         SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
         UBUNTU_VERSION=$(. /etc/os-release && echo "${VERSION_ID}")
@@ -97,7 +104,7 @@ runs:
           UBUNTU_LABEL="${UBUNTU_LABEL}-aarch64"
         fi
 
-        TOOLCHAIN_DIR="${{ runner.tool_cache }}/swift-Ubuntu/${SWIFT_VERSION}"
+        TOOLCHAIN_DIR="${TOOL_CACHE}/swift-Ubuntu/${SWIFT_VERSION}"
         if [[ -x "${TOOLCHAIN_DIR}/usr/bin/swift" ]]; then
           echo "Swift ${SWIFT_VERSION} already cached"
         else
@@ -115,8 +122,11 @@ runs:
           curl -fsSL "https://swift.org/keys/automatic-signing-key-4.asc" | gpg --import - 2>/dev/null || true
           curl -fsSL "https://swift.org/keys/all-keys.asc" | gpg --import - 2>/dev/null || true
 
-          if ! gpg --batch --verify "${DL_DIR}/${TARBALL}.sig" "${DL_DIR}/${TARBALL}" 2>/dev/null; then
-            echo "::warning::GPG signature verification could not be completed; proceeding with HTTPS-verified download"
+          # A toolchain that fails its signature check is never installed: it
+          # would be cached and linked into every binary this action builds.
+          if ! gpg --batch --verify "${DL_DIR}/${TARBALL}.sig" "${DL_DIR}/${TARBALL}"; then
+            echo "::error::GPG signature verification failed for ${TARBALL}"
+            exit 1
           fi
 
           mkdir -p "${TOOLCHAIN_DIR}"
@@ -129,7 +139,7 @@ runs:
 
     - name: Restore SwiftPM .build cache
       id: build-cache
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ inputs.path }}/.build
         key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
@@ -197,7 +207,7 @@ runs:
 
     - name: Save SwiftPM .build cache
       if: inputs.build == 'true' && steps.build-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ inputs.path }}/.build
         key: ${{ steps.build-cache.outputs.cache-primary-key }}
