@@ -1,0 +1,157 @@
+name: Swift release check
+
+# Every Thursday: if swiftlang/swift has shipped a newer release than the
+# action's default swift-version, prove the action installs and builds with it
+# on both architectures, then propose the bump.
+on:
+  schedule:
+    - cron: "0 7 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-release-check
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.check.outputs.current }}
+      latest: ${{ steps.check.outputs.latest }}
+      tag: ${{ steps.check.outputs.tag }}
+      bump: ${{ steps.check.outputs.bump }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Compare default against latest Swift release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CURRENT=$(awk '/^  swift-version:/ { f = 1 } f && /default:/ { gsub(/"/, "", $2); print $2; exit }' action.yaml)
+          TAG=$(gh api repos/swiftlang/swift/releases/latest --jq .tag_name)
+          if [[ ! "$TAG" =~ ^swift-([0-9]+\.[0-9]+(\.[0-9]+)?)-RELEASE$ ]]; then
+            echo "::error::Unexpected latest Swift release tag '$TAG'"
+            exit 1
+          fi
+          LATEST="${BASH_REMATCH[1]}"
+          echo "Default: $CURRENT, latest release: $LATEST ($TAG)"
+
+          # x.y and x.y.0 are the same release; compare on three components.
+          norm() { local v="$1"; [[ "$v" =~ ^[0-9]+\.[0-9]+$ ]] && v="$v.0"; echo "$v"; }
+          C=$(norm "$CURRENT"); L=$(norm "$LATEST")
+          if [[ "$C" == "$L" || "$(printf '%s\n%s\n' "$C" "$L" | sort -V | tail -n1)" == "$C" ]]; then
+            echo "Up to date."
+            exit 0
+          fi
+
+          # Release tags can land before the Linux tarballs do; try again next week.
+          for P in ubuntu2404:ubuntu24.04 ubuntu2404-aarch64:ubuntu24.04-aarch64; do
+            URL="https://download.swift.org/swift-${LATEST}-release/${P%%:*}/${TAG}/${TAG}-${P##*:}.tar.gz"
+            CODE=$(curl -sIo /dev/null -w '%{http_code}' "$URL")
+            if [[ "$CODE" != 200 ]]; then
+              echo "::notice::$TAG not downloadable yet ($CODE for $URL)"
+              exit 0
+            fi
+          done
+
+          if gh api "repos/${GITHUB_REPOSITORY}/branches/bot/swift-${LATEST}" >/dev/null 2>&1; then
+            echo "::notice::Branch bot/swift-${LATEST} already exists; bump already proposed."
+            exit 0
+          fi
+
+          IFS=. read -r CMAJ CMIN _ <<< "$C"
+          IFS=. read -r LMAJ LMIN _ <<< "$L"
+          if   [[ "$CMAJ" != "$LMAJ" ]]; then BUMP="major"
+          elif [[ "$CMIN" != "$LMIN" ]]; then BUMP="minor"
+          else BUMP="patch"
+          fi
+
+          {
+            echo "current=$CURRENT"
+            echo "latest=$LATEST"
+            echo "tag=$TAG"
+            echo "bump=$BUMP"
+          } >> "$GITHUB_OUTPUT"
+
+  smoke-test:
+    needs: detect
+    if: needs.detect.outputs.bump != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./
+        id: swift
+        with:
+          swift-version: ${{ needs.detect.outputs.latest }}
+          path: tests/fixture
+          cache-key-prefix: release-check
+
+      - name: Run built binary
+        env:
+          BIN_PATH: ${{ steps.swift.outputs.bin-path }}
+        run: |
+          swift --version
+          "$BIN_PATH/Hello" | grep -qx 'hello from swift'
+
+  propose:
+    needs: [detect, smoke-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Push bump branch and open a PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ needs.detect.outputs.current }}
+          LATEST: ${{ needs.detect.outputs.latest }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          BUMP: ${{ needs.detect.outputs.bump }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          BRANCH="bot/swift-${LATEST}"
+          TITLE="chore: bump default Swift to ${LATEST}"
+
+          scripts/set-swift-version.sh "$LATEST"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "$TITLE"
+          git push origin "$BRANCH"
+
+          BODY_FILE=$(mktemp)
+          cat > "$BODY_FILE" <<BODY
+          Swift [${TAG}](https://github.com/swiftlang/swift/releases/tag/${TAG}) is out; the action defaults to \`${CURRENT}\`.
+
+          The action already installed ${LATEST} (download + GPG verify) and built and ran \`tests/fixture\` on ubuntu-24.04 x86_64 and aarch64: ${RUN_URL}
+
+          Before merging:
+          - Skim the [release notes](https://github.com/swiftlang/swift/releases/tag/${TAG}) and [swift.org/blog](https://www.swift.org/blog/) for security fixes worth calling out, and for source breaks that would hit consumers on \`@v1\`.
+          - Labelled \`${BUMP}\` by the Swift version change; relabel if consumers should not pick this up through \`@v1\` without a heads-up.
+
+          This PR was opened with \`GITHUB_TOKEN\`, so PR workflows (self-test, version label) do not run on it automatically; close and reopen it to trigger them.
+          BODY
+
+          # Repos that do not allow Actions to create PRs reject this; fall back
+          # to an issue pointing at the pushed branch.
+          if ! gh pr create --base main --head "$BRANCH" --title "$TITLE" --label "$BUMP" --body-file "$BODY_FILE"; then
+            COMPARE="${{ github.server_url }}/${{ github.repository }}/compare/main...${BRANCH}?expand=1"
+            printf '\n**Actions could not open the PR in this repo; open it from %s**\n' "$COMPARE" >> "$BODY_FILE"
+            gh issue create --title "$TITLE" --body-file "$BODY_FILE"
+          fi

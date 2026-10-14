@@ -8,8 +8,11 @@ branding:
 
 inputs:
   swift-version:
-    description: Swift toolchain version
-    default: "6.2"
+    description: >
+      Swift toolchain version, as the full release number (e.g. "6.4.0").
+      Releases from 6.4 on are only published under x.y.z, so "6.4" does not
+      resolve; for older lines "6.2" means 6.2.0, not the latest 6.2.x.
+    default: "6.4.0"
   path:
     description: Path to the Swift package (contains Package.swift)
     default: "."

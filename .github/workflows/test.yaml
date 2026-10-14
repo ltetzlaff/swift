@@ -5,7 +5,7 @@ on:
     inputs:
       swift-version:
         type: string
-        default: "6.2"
+        default: "6.4.0"
       path:
         description: Path to the Swift package (contains Package.swift)
         type: string
