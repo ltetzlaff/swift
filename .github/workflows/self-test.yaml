@@ -40,3 +40,28 @@ jobs:
                   assert os.path.getmtime(p) < now, f"{p} is not stamped in the past"
           print("all stamps in the past")
           PY
+
+  # Runs the action itself end to end on a throwaway package, on both runner
+  # architectures. This is what proves a new default swift-version actually
+  # downloads, verifies, installs and builds before it ships.
+  action:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./
+        id: swift
+        with:
+          path: tests/fixture
+          cache-key-prefix: self-test
+
+      - name: Run built binary
+        env:
+          BIN_PATH: ${{ steps.swift.outputs.bin-path }}
+        run: |
+          swift --version
+          "$BIN_PATH/Hello" | grep -qx 'hello from swift'
