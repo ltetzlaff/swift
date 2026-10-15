@@ -32,6 +32,35 @@ jobs:
       - name: Recovery decision tests
         run: bash tests/build-with-recovery.test.sh
 
+      - name: Discarding root outputs keeps dependency outputs
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, tempfile
+          d = tempfile.mkdtemp()
+          conf = os.path.join(d, ".build", "x86_64-unknown-linux-gnu", "release")
+          os.makedirs(os.path.join(conf, "Modules"))
+          os.symlink(conf, os.path.join(d, ".build", "release"))
+          files = ["App.build/main.swift.o", "App-tool.build/x.o", "App", "App.product/x",
+                   "Modules/App.swiftmodule", "Modules/My_Lib.swiftmodule", "My-Lib.build/a.o",
+                   "HelloPackageTests.product/x",
+                   "Dep.build/a.o", "Modules/Dep.swiftmodule", "Application.build/a.o", "description.json"]
+          for f in files:
+              p = os.path.join(conf, f)
+              os.makedirs(os.path.dirname(p), exist_ok=True)
+              open(p, "w").close()
+          manifest = os.path.join(d, "m.json")
+          json.dump({"name": "Hello", "targets": [{"name": "App"}, {"name": "My-Lib"}],
+                     "products": [{"name": "App"}]}, open(manifest, "w"))
+          script = os.path.join(os.getcwd(), "scripts", "discard-root-outputs.py")
+          subprocess.run(["python3", script, "--manifest", manifest,
+                          "--build-dir", os.path.join(d, ".build")], check=True)
+          left = sorted(os.path.relpath(os.path.join(r, n), conf)
+                        for r, _, ns in os.walk(conf) for n in ns)
+          want = ["Application.build/a.o", "Dep.build/a.o", "Modules/Dep.swiftmodule", "description.json"]
+          assert left == want, left
+          print("kept:", left)
+          PY
+
       - name: Mtime stamps land in the past
         run: |
           python3 - <<'PY'
@@ -79,6 +108,18 @@ jobs:
         run: |
           swift --version
           "$BIN_PATH/Hello" | grep -qx 'hello from swift'
+
+      # The same .build again with fresh-root-package: the root target must
+      # compile again even though nothing changed, and still run.
+      - name: Rebuild with fresh-root-package
+        working-directory: tests/fixture
+        env:
+          ACTION_PATH: ${{ github.workspace }}
+        run: |
+          python3 "$ACTION_PATH/scripts/discard-root-outputs.py"
+          swift build -c release 2>&1 | tee build.log
+          grep -q 'Compiling Hello' build.log
+          "$(swift build -c release --show-bin-path)/Hello" | grep -qx 'hello from swift'
 
   # x.0 releases were published as "6.3" up to 6.3 and as "6.4.0" from 6.4 on;
   # the other spelling must install the same toolchain, not 404.

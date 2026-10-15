@@ -90,6 +90,7 @@ That's it. Installs Swift, resolves dependencies, normalizes timestamps, and bui
 | `cache-suffix`        | _(empty)_ | Change to abandon existing caches and build cold |
 | `jemalloc`            | `false`   | Install and link jemalloc                       |
 | `build`               | `true`    | Set to `false` to skip build (e.g. for testing) |
+| `fresh-root-package`  | `false`   | Recompile the root package's own targets cold; dependencies stay cached |
 | `locked-dependencies` | `false`   | Fail unless dependencies match the committed `Package.resolved` |
 
 ## Outputs
@@ -110,6 +111,8 @@ That's it. Installs Swift, resolves dependencies, normalizes timestamps, and bui
    This axis cannot be fixed by narrowing the cache key the way the dependency graph was. First-party sources change on nearly every commit, so keying on them would mean a cold build every time — no cache at all. Recovery keeps builds incremental and makes the rare stale link self-healing instead of fatal.
 
    Recovery also matters because a failed run saves no cache. Without it, one stale entry stays the newest for its key and every later build restores it and fails identically, until someone deletes it through the API.
+
+5. **Fresh root package (opt-in)** — recovery only catches stale objects that fail to link. A stale object can also link fine: when a type changes size or layout and the incremental build does not recompile a module that only stores or copies it, the binary builds green and misbehaves at runtime. With `fresh-root-package: "true"` the action deletes the root package's own outputs from the restored `.build` before building, so every first-party module compiles from scratch against the current sources. Dependency outputs are pinned by `Package.resolved` and stay cached, so this costs only the compile time of your own targets. Turn it on for builds you ship.
 
 ### When recovery does *and* does not trigger
 
