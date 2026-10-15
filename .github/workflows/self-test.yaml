@@ -80,6 +80,35 @@ jobs:
           swift --version
           "$BIN_PATH/Hello" | grep -qx 'hello from swift'
 
+  # x.0 releases were published as "6.3" up to 6.3 and as "6.4.0" from 6.4 on;
+  # the other spelling must install the same toolchain, not 404.
+  version-spelling:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - input: "6.3.0"
+            expect: "Swift version 6.3 "
+          - input: "6.4"
+            expect: "Swift version 6.4 "
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: $/
+        with:
+          swift-version: ${{ matrix.input }}
+          path: tests/fixture
+          cache-key-prefix: self-test-spelling
+          build: "false"
+
+      - name: Installed the expected toolchain
+        env:
+          EXPECT: ${{ matrix.expect }}
+        run: swift --version 2>&1 | tee /dev/stderr | grep -qF "$EXPECT"
+
   # locked-dependencies: builds when Package.resolved matches, refuses to run
   # when there is no Package.resolved to lock to.
   locked:
