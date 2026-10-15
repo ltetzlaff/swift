@@ -51,6 +51,14 @@ inputs:
   build:
     description: "Run swift build. Set to 'false' for setup-only (e.g. when running tests)."
     default: "true"
+  fresh-root-package:
+    description: >
+      Recompile every target of the root package from scratch while still
+      reusing cached dependency outputs. An incremental build can miss a
+      dependent of a changed type and link a stale object that runs wrong
+      without any build error; this rules that out. Recommended for release
+      builds. Costs a cold compile of your own targets only.
+    default: "false"
   locked-dependencies:
     description: >
       Resolve strictly from the committed Package.resolved and fail if it is
@@ -224,6 +232,12 @@ runs:
       shell: bash
       working-directory: ${{ inputs.path }}
       run: python3 "$GITHUB_ACTION_PATH/scripts/normalize-mtimes.py"
+
+    - name: Discard first-party build outputs
+      if: inputs.build == 'true' && inputs.fresh-root-package == 'true' && steps.build-cache.outputs.cache-matched-key != ''
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: python3 "$GITHUB_ACTION_PATH/scripts/discard-root-outputs.py"
 
     # ── Build ──────────────────────────────────────────────────
     - name: Build
