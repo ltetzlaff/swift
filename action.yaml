@@ -9,10 +9,10 @@ branding:
 inputs:
   swift-version:
     description: >
-      Swift toolchain version, as the full release number (e.g. "6.3.3").
-      Releases from 6.4 on are only published under x.y.z, so "6.4" does not
-      resolve; for older lines "6.2" means 6.2.0, not the latest 6.2.x.
-      6.4.0 cannot statically link Foundation on Linux; it is not the default.
+      Swift toolchain version, e.g. "6.3.3". Pin an exact patch: "6.3" and
+      "6.3.0" both mean 6.3.0, never the latest 6.3.x. Either spelling of an
+      x.0 release works. 6.4.0 cannot statically link Foundation on Linux; it
+      is not the default.
     default: "6.3.3"
   path:
     description: Path to the Swift package (contains Package.swift)
@@ -103,8 +103,18 @@ runs:
           echo "::error::swift-version must look like 6.4.0, got '${SWIFT_VERSION}'"
           exit 1
         fi
-        SWIFT_BRANCH="swift-${SWIFT_VERSION}-release"
-        SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
+        # swift.org published x.0 releases as "6.3" up to 6.3 and as "6.4.0" from
+        # 6.4 on. Accept either spelling and download the name that exists.
+        IFS=. read -r V_MAJOR V_MINOR V_PATCH <<< "$SWIFT_VERSION"
+        if (( V_MAJOR > 6 || (V_MAJOR == 6 && V_MINOR >= 4) )); then
+          DL_VERSION="${V_MAJOR}.${V_MINOR}.${V_PATCH:-0}"
+        elif [[ "${V_PATCH:-0}" == 0 ]]; then
+          DL_VERSION="${V_MAJOR}.${V_MINOR}"
+        else
+          DL_VERSION="$SWIFT_VERSION"
+        fi
+        SWIFT_BRANCH="swift-${DL_VERSION}-release"
+        SWIFT_TAG="swift-${DL_VERSION}-RELEASE"
         UBUNTU_VERSION=$(. /etc/os-release && echo "${VERSION_ID}")
         echo "ubuntu-version=${UBUNTU_VERSION}" >> "$GITHUB_OUTPUT"
         UBUNTU_LABEL="ubuntu${UBUNTU_VERSION}"
