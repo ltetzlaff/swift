@@ -51,6 +51,12 @@ inputs:
   build:
     description: "Run swift build. Set to 'false' for setup-only (e.g. when running tests)."
     default: "true"
+  locked-dependencies:
+    description: >
+      Resolve strictly from the committed Package.resolved and fail if it is
+      missing or out of date, instead of silently resolving other versions.
+      Recommended for applications and services that commit Package.resolved.
+    default: "false"
 
 outputs:
   cache-hit:
@@ -189,7 +195,20 @@ runs:
     - name: Resolve dependencies
       shell: bash
       working-directory: ${{ inputs.path }}
-      run: swift package resolve
+      env:
+        LOCKED: ${{ inputs.locked-dependencies }}
+      run: |
+        if [[ "$LOCKED" == "true" ]]; then
+          # Without the file there is nothing to lock to, and SwiftPM would
+          # quietly resolve fresh versions anyway.
+          if [[ ! -f Package.resolved ]]; then
+            echo "::error::locked-dependencies is on but Package.resolved is missing"
+            exit 1
+          fi
+          swift package resolve --only-use-versions-from-resolved-file
+        else
+          swift package resolve
+        fi
 
     - name: Normalize file timestamps for incremental builds
       shell: bash

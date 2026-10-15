@@ -80,6 +80,46 @@ jobs:
           swift --version
           "$BIN_PATH/Hello" | grep -qx 'hello from swift'
 
+  # locked-dependencies: builds when Package.resolved matches, refuses to run
+  # when there is no Package.resolved to lock to.
+  locked:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: $/
+        id: swift
+        with:
+          path: tests/fixture-locked
+          cache-key-prefix: self-test-locked
+          locked-dependencies: "true"
+
+      - name: Run built binary
+        env:
+          BIN_PATH: ${{ steps.swift.outputs.bin-path }}
+        run: |
+          "$BIN_PATH/Locked" | grep -qx 'hello from a locked package'
+          git diff --exit-code -- tests/fixture-locked/Package.resolved
+
+      - uses: $/
+        id: missing
+        continue-on-error: true
+        with:
+          path: tests/fixture
+          cache-key-prefix: self-test-locked-missing
+          locked-dependencies: "true"
+
+      - name: Missing Package.resolved must fail
+        env:
+          OUTCOME: ${{ steps.missing.outcome }}
+        run: |
+          if [[ "$OUTCOME" != "failure" ]]; then
+            echo "::error::locked-dependencies accepted a package without Package.resolved"
+            exit 1
+          fi
+
   # Static security audit of action.yaml, the workflows and dependabot.yml:
   # template injection, credential persistence, unpinned actions, excessive
   # permissions. Any finding fails the PR.

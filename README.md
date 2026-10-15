@@ -90,6 +90,7 @@ That's it. Installs Swift, resolves dependencies, normalizes timestamps, and bui
 | `cache-suffix`        | _(empty)_ | Change to abandon existing caches and build cold |
 | `jemalloc`            | `false`   | Install and link jemalloc                       |
 | `build`               | `true`    | Set to `false` to skip build (e.g. for testing) |
+| `locked-dependencies` | `false`   | Fail unless dependencies match the committed `Package.resolved` |
 
 ## Outputs
 
