@@ -70,24 +70,36 @@ runs:
     # ── Setup ──────────────────────────────────────────────────
     - name: Configure SSH
       if: inputs.ssh-key != ''
-      uses: webfactory/ssh-agent@v0.10.0
+      uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
       with:
         ssh-private-key: ${{ inputs.ssh-key }}
 
     - name: Cache Swift toolchain
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.tool_cache }}/swift-Ubuntu
-        key: swift-toolchain-${{ inputs.swift-version }}-${{ runner.os }}-${{ runner.arch }}
+        # "verified" marks toolchains installed under pinned-key verification;
+        # ones cached while a failed signature was only a warning are never reused.
+        key: swift-toolchain-verified-${{ inputs.swift-version }}-${{ runner.os }}-${{ runner.arch }}
 
     - name: Install Swift
+      id: install
       shell: bash
-      run: |
-        SWIFT_VERSION="${{ inputs.swift-version }}"
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+        TOOL_CACHE: ${{ runner.tool_cache }}
+        ACTION_PATH: ${{ github.action_path }}
+      # GITHUB_PATH gets only TOOL_CACHE/swift-Ubuntu/<validated version>/usr/bin.
+      run: | # zizmor: ignore[github-env]
+        # The version lands in URLs and paths; refuse anything but a release number.
+        if [[ ! "$SWIFT_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+          echo "::error::swift-version must look like 6.4.0, got '${SWIFT_VERSION}'"
+          exit 1
+        fi
         SWIFT_BRANCH="swift-${SWIFT_VERSION}-release"
         SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
         UBUNTU_VERSION=$(. /etc/os-release && echo "${VERSION_ID}")
-        echo "UBUNTU_VERSION=${UBUNTU_VERSION}" >> "$GITHUB_ENV"
+        echo "ubuntu-version=${UBUNTU_VERSION}" >> "$GITHUB_OUTPUT"
         UBUNTU_LABEL="ubuntu${UBUNTU_VERSION}"
         PLATFORM="ubuntu${UBUNTU_VERSION//./}"
 
@@ -97,7 +109,7 @@ runs:
           UBUNTU_LABEL="${UBUNTU_LABEL}-aarch64"
         fi
 
-        TOOLCHAIN_DIR="${{ runner.tool_cache }}/swift-Ubuntu/${SWIFT_VERSION}"
+        TOOLCHAIN_DIR="${TOOL_CACHE}/swift-Ubuntu/${SWIFT_VERSION}"
         if [[ -x "${TOOLCHAIN_DIR}/usr/bin/swift" ]]; then
           echo "Swift ${SWIFT_VERSION} already cached"
         else
@@ -105,18 +117,30 @@ runs:
           TARBALL="${SWIFT_TAG}-${UBUNTU_LABEL}.tar.gz"
           echo "Downloading ${BASE_URL}/${TARBALL}"
 
-          DL_DIR="$(mktemp -d)"
-          curl -fsSL "${BASE_URL}/${TARBALL}" -o "${DL_DIR}/${TARBALL}"
-          curl -fsSL "${BASE_URL}/${TARBALL}.sig" -o "${DL_DIR}/${TARBALL}.sig"
-
-          # Import Swift signing keys: version-specific release key + all-keys bundle
+          # Signing keys are vendored in keys/ and pinned by fingerprint here,
+          # never fetched from swift.org next to the tarball they vouch for.
           MAJOR_VERSION="${SWIFT_VERSION%%.*}"
-          curl -fsSL "https://swift.org/keys/release-key-swift-${MAJOR_VERSION}.x.asc" | gpg --import - 2>/dev/null || true
-          curl -fsSL "https://swift.org/keys/automatic-signing-key-4.asc" | gpg --import - 2>/dev/null || true
-          curl -fsSL "https://swift.org/keys/all-keys.asc" | gpg --import - 2>/dev/null || true
+          case "$MAJOR_VERSION" in
+            6) KEY_FPR=52BB7E3DE28A71BE22EC05FFEF80A866B47A981F ;;
+            5) KEY_FPR=A62AE125BBBFBB96A6E042EC925CC1CCED3D1561 ;;
+            *)
+              echo "::error::No pinned signing key for Swift ${MAJOR_VERSION}.x; see keys/README.md"
+              exit 1
+              ;;
+          esac
 
-          if ! gpg --batch --verify "${DL_DIR}/${TARBALL}.sig" "${DL_DIR}/${TARBALL}" 2>/dev/null; then
-            echo "::warning::GPG signature verification could not be completed; proceeding with HTTPS-verified download"
+          DL_DIR="$(mktemp -d)"
+          CURL=(curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2)
+          "${CURL[@]}" "${BASE_URL}/${TARBALL}" -o "${DL_DIR}/${TARBALL}"
+          "${CURL[@]}" "${BASE_URL}/${TARBALL}.sig" -o "${DL_DIR}/${TARBALL}.sig"
+
+          # A toolchain that fails its signature check is never installed: it
+          # would be cached and linked into every binary this action builds.
+          if ! bash "${ACTION_PATH}/scripts/verify-signature.sh" \
+              "${DL_DIR}/${TARBALL}" "${DL_DIR}/${TARBALL}.sig" \
+              "${ACTION_PATH}/keys/swift-${MAJOR_VERSION}.x.asc" "$KEY_FPR"; then
+            echo "::error::Signature verification failed for ${TARBALL}"
+            exit 1
           fi
 
           mkdir -p "${TOOLCHAIN_DIR}"
@@ -124,15 +148,17 @@ runs:
           rm -rf "${DL_DIR}"
         fi
 
+        # Putting swift on PATH is the point of this step; the entry is built from
+        # the validated version and the runner's own tool cache.
         echo "${TOOLCHAIN_DIR}/usr/bin" >> "$GITHUB_PATH"
         swift --version
 
     - name: Restore SwiftPM .build cache
       id: build-cache
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ inputs.path }}/.build
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
         # Only ever fall back within one Package.resolved. A .build from a
         # different dependency graph links stale objects against freshly
         # compiled dependencies — a changed graph must build cold.
@@ -144,7 +170,7 @@ runs:
         # rather than by narrowing this key, since first-party sources change on
         # nearly every commit and keying on them would mean never reusing a cache.
         restore-keys: |
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ env.UBUNTU_VERSION }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
 
     - name: Install system build dependencies
       shell: bash
@@ -197,7 +223,7 @@ runs:
 
     - name: Save SwiftPM .build cache
       if: inputs.build == 'true' && steps.build-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ inputs.path }}/.build
         key: ${{ steps.build-cache.outputs.cache-primary-key }}

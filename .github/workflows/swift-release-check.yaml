@@ -24,7 +24,7 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       bump: ${{ steps.check.outputs.bump }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -88,11 +88,11 @@ jobs:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: ./
+      - uses: $/
         id: swift
         with:
           swift-version: ${{ needs.detect.outputs.latest }}
@@ -110,11 +110,13 @@ jobs:
     needs: [detect, smoke-test]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+      contents: write # push the bot/swift-<version> branch
+      pull-requests: write # open the bump PR
+      issues: write # fall back to an issue when Actions may not open PRs
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Push bump branch and open a PR
         env:
@@ -123,8 +125,9 @@ jobs:
           LATEST: ${{ needs.detect.outputs.latest }}
           TAG: ${{ needs.detect.outputs.tag }}
           BUMP: ${{ needs.detect.outputs.bump }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
         run: |
+          RUN_URL="${SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           BRANCH="bot/swift-${LATEST}"
           TITLE="chore: bump default Swift to ${LATEST}"
 
@@ -133,7 +136,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
           git commit -am "$TITLE"
-          git push origin "$BRANCH"
+          # The token is handed to this one push, never stored in .git/config.
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::${AUTH}"
+          git -c "http.${SERVER_URL}/.extraheader=AUTHORIZATION: basic ${AUTH}" push origin "$BRANCH"
 
           BODY_FILE=$(mktemp)
           cat > "$BODY_FILE" <<BODY
@@ -151,7 +157,7 @@ jobs:
           # Repos that do not allow Actions to create PRs reject this; fall back
           # to an issue pointing at the pushed branch.
           if ! gh pr create --base main --head "$BRANCH" --title "$TITLE" --label "$BUMP" --body-file "$BODY_FILE"; then
-            COMPARE="${{ github.server_url }}/${{ github.repository }}/compare/main...${BRANCH}?expand=1"
+            COMPARE="${SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1"
             printf '\n**Actions could not open the PR in this repo; open it from %s**\n' "$COMPARE" >> "$BODY_FILE"
             gh issue create --title "$TITLE" --body-file "$BODY_FILE"
           fi

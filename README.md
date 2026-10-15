@@ -121,6 +121,17 @@ Only link-time and module-format failures are retried:
 
 Ordinary compile errors are never retried — they come from the source, so a second full build would just fail again and double the wait. A build that started cold is never retried either: there is no cache to blame.
 
+## Security
+
+The toolchain is only installed if its signature verifies against a Swift
+release key vendored in [`keys/`](keys/README.md) and pinned by fingerprint.
+All third-party actions are pinned to commit SHAs. See [SECURITY.md](SECURITY.md)
+for what the action guarantees and how to report a vulnerability.
+
+The reusable workflows refer to this action with `uses: $/`, so they always run
+the action from the same commit as the workflow. On self-hosted runners that
+needs runner 2.336.0 or newer.
+
 ## License
 
 MIT
