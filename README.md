@@ -79,7 +79,7 @@ That's it. Installs Swift, resolves dependencies, normalizes timestamps, and bui
 
 | Input                 | Default   | Description                                     |
 | --------------------- | --------- | ----------------------------------------------- |
-| `swift-version`       | `6.4.0`   | Swift toolchain version                         |
+| `swift-version`       | `6.3.3`   | Swift toolchain version                         |
 | `path`                | `.`       | Path to the Swift package                       |
 | `ssh-key`             | _(empty)_ | SSH private key for private dependency repos    |
 | `configuration`       | `release` | `debug` or `release`                            |

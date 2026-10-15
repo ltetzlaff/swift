@@ -9,10 +9,11 @@ branding:
 inputs:
   swift-version:
     description: >
-      Swift toolchain version, as the full release number (e.g. "6.4.0").
+      Swift toolchain version, as the full release number (e.g. "6.3.3").
       Releases from 6.4 on are only published under x.y.z, so "6.4" does not
       resolve; for older lines "6.2" means 6.2.0, not the latest 6.2.x.
-    default: "6.4.0"
+      6.4.0 cannot statically link Foundation on Linux; it is not the default.
+    default: "6.3.3"
   path:
     description: Path to the Swift package (contains Package.swift)
     default: "."
