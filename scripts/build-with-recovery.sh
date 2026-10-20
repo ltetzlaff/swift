@@ -33,6 +33,8 @@ set -uo pipefail
 # find 'x' in scope") are never retried: they come from the source, so a cold
 # rebuild would burn another full build and fail identically. These signatures,
 # by contrast, essentially cannot occur when valid sources are built cold.
+# Swift Build (the default from Swift 6.4) prints the same linker and compiler
+# lines, prefixed with the manifest and task, so they match unchanged.
 STALE_SIGNATURES='undefined reference to|Undefined symbols for architecture|duplicate symbol|error: link command failed|module file was created by a different version|is not a valid Swift module'
 
 FLAGS=""

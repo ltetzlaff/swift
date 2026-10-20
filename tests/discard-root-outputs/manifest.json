@@ -1,0 +1,25 @@
+{
+  "name": "Server",
+  "targets": [
+    {
+      "name": "App",
+      "type": "executable"
+    },
+    {
+      "name": "My-Lib",
+      "type": "regular"
+    },
+    {
+      "name": "MyLibTests",
+      "type": "test"
+    }
+  ],
+  "products": [
+    {
+      "name": "Server"
+    },
+    {
+      "name": "RootKit"
+    }
+  ]
+}

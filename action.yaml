@@ -121,6 +121,8 @@ runs:
         else
           DL_VERSION="$SWIFT_VERSION"
         fi
+        # Normalized ("6.3", "6.3.3", "6.4.0"), so either spelling shares one .build cache.
+        echo "swift-version=${DL_VERSION}" >> "$GITHUB_OUTPUT"
         SWIFT_BRANCH="swift-${DL_VERSION}-release"
         SWIFT_TAG="swift-${DL_VERSION}-RELEASE"
         UBUNTU_VERSION=$(. /etc/os-release && echo "${VERSION_ID}")
@@ -183,7 +185,12 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ inputs.path }}/.build
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-swift${{ steps.install.outputs.swift-version }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        # The toolchain is in the key: another compiler's .build is useless — its
+        # modules cannot be loaded — and from 6.4 on SwiftPM builds with Swift
+        # Build into .build/out, so an older cache would only be dead weight
+        # restored and saved again alongside the new layout.
+        #
         # Only ever fall back within one Package.resolved. A .build from a
         # different dependency graph links stale objects against freshly
         # compiled dependencies — a changed graph must build cold.
@@ -195,7 +202,7 @@ runs:
         # rather than by narrowing this key, since first-party sources change on
         # nearly every commit and keying on them would mean never reusing a cache.
         restore-keys: |
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-swift${{ steps.install.outputs.swift-version }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
 
     - name: Install system build dependencies
       shell: bash
