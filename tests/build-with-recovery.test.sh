@@ -76,6 +76,8 @@ check "green build does not retry"                1           ""                
 check "stale link error recovers cold"            2           "undefined reference to '\$s4Demo3FooV'"  "some-key"   0       2       true
 check "macOS stale signature recovers"            2           "Undefined symbols for architecture"     "some-key"   0       2       true
 check "duplicate symbol recovers"                 2           "duplicate symbol '_foo'"                "some-key"   0       2       true
+# Swift Build (6.4+) prefixes linker diagnostics with the manifest and task.
+check "Swift Build stale link error recovers"     2           "/w/Package.swift: App-product: /w/Sources/App/main.swift:2: error: undefined reference to 'x'"  "some-key"  0  2  true
 check "stale signature that fails cold too"       0           "undefined reference to '\$s4Demo3FooV'"  "some-key"   1       2       false
 check "ordinary compile error never retries"      0           "error: cannot find 'x' in scope"        "some-key"   1       1       false
 check "cold build failure never retries"          0           "undefined reference to '\$s4Demo3FooV'"  ""           1       1       false

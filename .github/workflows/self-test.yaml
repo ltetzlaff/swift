@@ -33,33 +33,7 @@ jobs:
         run: bash tests/build-with-recovery.test.sh
 
       - name: Discarding root outputs keeps dependency outputs
-        run: |
-          python3 - <<'PY'
-          import json, os, subprocess, tempfile
-          d = tempfile.mkdtemp()
-          conf = os.path.join(d, ".build", "x86_64-unknown-linux-gnu", "release")
-          os.makedirs(os.path.join(conf, "Modules"))
-          os.symlink(conf, os.path.join(d, ".build", "release"))
-          files = ["App.build/main.swift.o", "App-tool.build/x.o", "App", "App.product/x",
-                   "Modules/App.swiftmodule", "Modules/My_Lib.swiftmodule", "My-Lib.build/a.o",
-                   "HelloPackageTests.product/x",
-                   "Dep.build/a.o", "Modules/Dep.swiftmodule", "Application.build/a.o", "description.json"]
-          for f in files:
-              p = os.path.join(conf, f)
-              os.makedirs(os.path.dirname(p), exist_ok=True)
-              open(p, "w").close()
-          manifest = os.path.join(d, "m.json")
-          json.dump({"name": "Hello", "targets": [{"name": "App"}, {"name": "My-Lib"}],
-                     "products": [{"name": "App"}]}, open(manifest, "w"))
-          script = os.path.join(os.getcwd(), "scripts", "discard-root-outputs.py")
-          subprocess.run(["python3", script, "--manifest", manifest,
-                          "--build-dir", os.path.join(d, ".build")], check=True)
-          left = sorted(os.path.relpath(os.path.join(r, n), conf)
-                        for r, _, ns in os.walk(conf) for n in ns)
-          want = ["Application.build/a.o", "Dep.build/a.o", "Modules/Dep.swiftmodule", "description.json"]
-          assert left == want, left
-          print("kept:", left)
-          PY
+        run: python3 tests/discard-root-outputs.test.py
 
       - name: Mtime stamps land in the past
         run: |
@@ -84,41 +58,59 @@ jobs:
 
   # Runs the action itself end to end on a throwaway package, on both runner
   # architectures. This is what proves a new default swift-version actually
-  # downloads, verifies, installs and builds before it ships.
+  # downloads, verifies, installs and builds before it ships. The default
+  # version builds with SwiftPM's native build system, 6.4.1 with Swift Build.
   action:
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        swift-version: [default, "6.4.1"]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # An empty input is not the default, so the default leg omits it.
       - uses: $/
-        id: swift
+        id: swift-default
+        if: matrix.swift-version == 'default'
         with:
+          path: tests/fixture
+          cache-key-prefix: self-test
+
+      - uses: $/
+        id: swift-pinned
+        if: matrix.swift-version != 'default'
+        with:
+          swift-version: ${{ matrix.swift-version }}
           path: tests/fixture
           cache-key-prefix: self-test
 
       - name: Run built binary
         env:
-          BIN_PATH: ${{ steps.swift.outputs.bin-path }}
+          BIN_PATH: ${{ steps.swift-default.outputs.bin-path || steps.swift-pinned.outputs.bin-path }}
         run: |
           swift --version
           "$BIN_PATH/Hello" | grep -qx 'hello from swift'
 
       # The same .build again with fresh-root-package: the root target must
-      # compile again even though nothing changed, and still run.
+      # compile again even though nothing changed, and still run. Checked by
+      # object mtimes, since the two build systems log differently.
       - name: Rebuild with fresh-root-package
         working-directory: tests/fixture
         env:
           ACTION_PATH: ${{ github.workspace }}
         run: |
-          python3 "$ACTION_PATH/scripts/discard-root-outputs.py"
-          swift build -c release 2>&1 | tee build.log
-          grep -q 'Compiling Hello' build.log
+          python3 "$ACTION_PATH/scripts/discard-root-outputs.py" | tee discard.log
+          if grep -q '^Discarded 0 ' discard.log; then
+            echo "::error::Nothing was discarded from a built .build"
+            exit 1
+          fi
+          touch "$RUNNER_TEMP/before-rebuild"
+          swift build -c release --static-swift-stdlib
+          find .build -name '*.o' -path '*Hello*' -newer "$RUNNER_TEMP/before-rebuild" | grep -q .
           "$(swift build -c release --show-bin-path)/Hello" | grep -qx 'hello from swift'
 
   # x.0 releases were published as "6.3" up to 6.3 and as "6.4.0" from 6.4 on;

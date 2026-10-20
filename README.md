@@ -104,7 +104,7 @@ That's it. Installs Swift, resolves dependencies, normalizes timestamps, and bui
 ## How Caching Works
 
 1. **Swift toolchain** — cached by version + OS + arch
-2. **SwiftPM `.build` directory** — cached by `Package.resolved` hash + commit SHA. An earlier commit's cache is reused only when the `Package.resolved` hash matches: a `.build` from a different dependency graph would link stale objects against freshly compiled dependencies, so a changed graph always builds cold.
+2. **SwiftPM `.build` directory** — cached by Swift version + `Package.resolved` hash + commit SHA. A cache from another toolchain is never restored: its modules cannot be loaded, and from Swift 6.4 SwiftPM builds with Swift Build into a different layout (`.build/out`). An earlier commit's cache is reused only when the `Package.resolved` hash matches: a `.build` from a different dependency graph would link stale objects against freshly compiled dependencies, so a changed graph always builds cold.
 3. **Mtime normalization** — file timestamps are set to deterministic content-based hashes so llbuild sees unchanged files as unchanged. Stamps always land in the past (a fixed 40-year window before 2020) so that no source ever appears newer than the outputs built from it.
 4. **Stale-cache recovery** — within one dependency graph the cache is still reused across commits, so a restored `.build` holds first-party objects older than the checkout. When a first-party module's ABI moves, llbuild does not reliably recompile every dependent, and the build dies at link time on a symbol that no longer exists. On that signature the action discards the cache, rebuilds cold once, and reports `cache-recovered: true`.
 
@@ -112,7 +112,7 @@ That's it. Installs Swift, resolves dependencies, normalizes timestamps, and bui
 
    Recovery also matters because a failed run saves no cache. Without it, one stale entry stays the newest for its key and every later build restores it and fails identically, until someone deletes it through the API.
 
-5. **Fresh root package (opt-in)** — recovery only catches stale objects that fail to link. A stale object can also link fine: when a type changes size or layout and the incremental build does not recompile a module that only stores or copies it, the binary builds green and misbehaves at runtime. With `fresh-root-package: "true"` the action deletes the root package's own outputs from the restored `.build` before building, so every first-party module compiles from scratch against the current sources. Dependency outputs are pinned by `Package.resolved` and stay cached, so this costs only the compile time of your own targets. Turn it on for builds you ship.
+5. **Fresh root package (opt-in)** — recovery only catches stale objects that fail to link. A stale object can also link fine: when a type changes size or layout and the incremental build does not recompile a module that only stores or copies it, the binary builds green and misbehaves at runtime. With `fresh-root-package: "true"` the action deletes the root package's own outputs from the restored `.build` before building (in both SwiftPM's native layout and Swift Build's `.build/out`), so every first-party module compiles from scratch against the current sources. Dependency outputs are pinned by `Package.resolved` and stay cached, so this costs only the compile time of your own targets. Turn it on for builds you ship.
 
 ### When recovery does *and* does not trigger
 
