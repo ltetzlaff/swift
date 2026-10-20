@@ -61,6 +61,9 @@ jobs:
   # downloads, verifies, installs and builds before it ships. The default
   # version builds with SwiftPM's native build system, 6.4.1 with Swift Build.
   action:
+    # The default legs keep the names the main ruleset requires:
+    # "action (ubuntu-24.04)" and "action (ubuntu-24.04-arm)".
+    name: action (${{ matrix.runner }}${{ matrix.swift-version != 'default' && format(', {0}', matrix.swift-version) || '' }})
     strategy:
       fail-fast: false
       matrix:
