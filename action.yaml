@@ -13,7 +13,7 @@ inputs:
       "6.3.0" both mean 6.3.0, never the latest 6.3.x. Either spelling of an
       x.0 release works. 6.4.0 cannot statically link Foundation on Linux; it
       is not the default. Empty means the default.
-    default: "6.3.3"
+    default: "6.4.1"
   path:
     description: Path to the Swift package (contains Package.swift)
     default: "."
@@ -98,7 +98,7 @@ runs:
       env:
         REQUESTED: ${{ inputs.swift-version }}
       run: |
-        SWIFT_VERSION="${REQUESTED:-6.3.3}"
+        SWIFT_VERSION="${REQUESTED:-6.4.1}"
         # The version lands in outputs, URLs and paths; refuse anything but a release number.
         if [[ ! "$SWIFT_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
           echo "::error::swift-version must look like 6.4.0, got '${SWIFT_VERSION}'"
