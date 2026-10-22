@@ -75,25 +75,18 @@ jobs:
         with:
           persist-credentials: false
 
-      # An empty input is not the default, so the default leg omits it.
+      # The default leg passes an explicit "", as the reusable workflows do
+      # when their caller leaves swift-version unset.
       - uses: $/
-        id: swift-default
-        if: matrix.swift-version == 'default'
+        id: swift
         with:
-          path: tests/fixture
-          cache-key-prefix: self-test
-
-      - uses: $/
-        id: swift-pinned
-        if: matrix.swift-version != 'default'
-        with:
-          swift-version: ${{ matrix.swift-version }}
+          swift-version: ${{ matrix.swift-version != 'default' && matrix.swift-version || '' }}
           path: tests/fixture
           cache-key-prefix: self-test
 
       - name: Run built binary
         env:
-          BIN_PATH: ${{ steps.swift-default.outputs.bin-path || steps.swift-pinned.outputs.bin-path }}
+          BIN_PATH: ${{ steps.swift.outputs.bin-path }}
         run: |
           swift --version
           "$BIN_PATH/Hello" | grep -qx 'hello from swift'

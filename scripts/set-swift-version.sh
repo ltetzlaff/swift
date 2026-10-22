@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
-# Rewrite the default swift-version everywhere it is declared: the action, the
-# two reusable workflows and the README inputs table. Used by the weekly Swift
-# release check; safe to run by hand.
+# Rewrite the default swift-version: the action (its input default and the
+# fallback for an empty input) and the README inputs table. The reusable
+# workflows defer to the action and are left alone, which keeps this script
+# within what GITHUB_TOKEN may push: it can never change .github/workflows/.
+# Used by the weekly Swift release check; safe to run by hand.
 #
 #   scripts/set-swift-version.sh 6.4.1
 set -euo pipefail
@@ -18,10 +20,12 @@ cd "$(dirname "$0")/.."
 CURRENT=$(awk '/^  swift-version:/ { f = 1 } f && /default:/ { gsub(/"/, "", $2); print $2; exit }' action.yaml)
 [[ -n "$CURRENT" ]] || { echo "error: no swift-version default in action.yaml" >&2; exit 1; }
 
-for f in action.yaml .github/workflows/build.yaml .github/workflows/test.yaml; do
-  sed -i.bak "s/default: \"${CURRENT//./\\.}\"/default: \"${NEW}\"/" "$f"
-  rm -f "$f.bak"
-  grep -q "default: \"${NEW}\"" "$f" || { echo "error: $f was not updated" >&2; exit 1; }
+CUR_RE="${CURRENT//./\\.}"
+sed -i.bak -e "s/default: \"${CUR_RE}\"/default: \"${NEW}\"/" \
+  -e "s/REQUESTED:-${CUR_RE}}/REQUESTED:-${NEW}}/" action.yaml
+rm -f action.yaml.bak
+for want in "default: \"${NEW}\"" "REQUESTED:-${NEW}}"; do
+  grep -qF "$want" action.yaml || { echo "error: action.yaml has no '$want'" >&2; exit 1; }
 done
 
 # Keep the table column width: the cell is padded to 10 characters.

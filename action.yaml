@@ -12,7 +12,7 @@ inputs:
       Swift toolchain version, e.g. "6.3.3". Pin an exact patch: "6.3" and
       "6.3.0" both mean 6.3.0, never the latest 6.3.x. Either spelling of an
       x.0 release works. 6.4.0 cannot statically link Foundation on Linux; it
-      is not the default.
+      is not the default. Empty means the default.
     default: "6.3.3"
   path:
     description: Path to the Swift package (contains Package.swift)
@@ -89,28 +89,40 @@ runs:
       with:
         ssh-private-key: ${{ inputs.ssh-key }}
 
+    # The reusable workflows forward swift-version even when their caller left
+    # it unset, and the runner does not apply the default above to an explicit
+    # "". Fall back here, so the default is declared in this file only.
+    - name: Resolve Swift version
+      id: swift-version
+      shell: bash
+      env:
+        REQUESTED: ${{ inputs.swift-version }}
+      run: |
+        SWIFT_VERSION="${REQUESTED:-6.3.3}"
+        # The version lands in outputs, URLs and paths; refuse anything but a release number.
+        if [[ ! "$SWIFT_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+          echo "::error::swift-version must look like 6.4.0, got '${SWIFT_VERSION}'"
+          exit 1
+        fi
+        echo "version=${SWIFT_VERSION}" >> "$GITHUB_OUTPUT"
+
     - name: Cache Swift toolchain
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.tool_cache }}/swift-Ubuntu
         # "verified" marks toolchains installed under pinned-key verification;
         # ones cached while a failed signature was only a warning are never reused.
-        key: swift-toolchain-verified-${{ inputs.swift-version }}-${{ runner.os }}-${{ runner.arch }}
+        key: swift-toolchain-verified-${{ steps.swift-version.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
 
     - name: Install Swift
       id: install
       shell: bash
       env:
-        SWIFT_VERSION: ${{ inputs.swift-version }}
+        SWIFT_VERSION: ${{ steps.swift-version.outputs.version }}
         TOOL_CACHE: ${{ runner.tool_cache }}
         ACTION_PATH: ${{ github.action_path }}
       # GITHUB_PATH gets only TOOL_CACHE/swift-Ubuntu/<validated version>/usr/bin.
       run: | # zizmor: ignore[github-env]
-        # The version lands in URLs and paths; refuse anything but a release number.
-        if [[ ! "$SWIFT_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-          echo "::error::swift-version must look like 6.4.0, got '${SWIFT_VERSION}'"
-          exit 1
-        fi
         # swift.org published x.0 releases as "6.3" up to 6.3 and as "6.4.0" from
         # 6.4 on. Accept either spelling and download the name that exists.
         IFS=. read -r V_MAJOR V_MINOR V_PATCH <<< "$SWIFT_VERSION"
