@@ -4,8 +4,9 @@ on:
   workflow_call:
     inputs:
       swift-version:
+        description: Swift toolchain version (empty uses the action's default)
         type: string
-        default: "6.3.3"
+        default: ""
       path:
         description: Path to the Swift package (contains Package.swift)
         type: string
