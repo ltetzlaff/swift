@@ -32,13 +32,44 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
         run: |
-          PR=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
-            --jq 'map(select(.merged_at != null and .base.ref == "main")) | first | .number // empty')
+          # The API answers with an empty 500 now and then, and the commit -> PR
+          # lookup has done so for hours on a fresh merge commit; retry each call.
+          api() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              gh api "$@" && return 0
+              echo "::warning::gh api $1 failed (attempt ${attempt}/5)" >&2
+              sleep $((attempt * 10))
+            done
+            return 1
+          }
+
+          LOOKUP_FAILED=""
+          PR=$(api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
+            --jq 'map(select(.merged_at != null and .base.ref == "main")) | first | .number // empty') \
+            || LOOKUP_FAILED=1
+
+          # Fall back to the number GitHub writes into a merge commit's subject,
+          # trusted only once the PR confirms it merged into main as this commit.
           if [[ -z "$PR" ]]; then
+            SUBJECT=$(git log -1 --format=%s "$SHA")
+            if [[ "$SUBJECT" =~ ^Merge\ pull\ request\ \#([0-9]+)\ from\  ]]; then
+              CANDIDATE="${BASH_REMATCH[1]}"
+              MERGED_AS=$(api "repos/${GITHUB_REPOSITORY}/pulls/${CANDIDATE}" \
+                --jq 'select(.merged_at != null and .base.ref == "main") | .merge_commit_sha') || true
+              [[ "$MERGED_AS" == "$SHA" ]] && PR="$CANDIDATE"
+            fi
+          fi
+
+          if [[ -z "$PR" ]]; then
+            if [[ -n "$LOOKUP_FAILED" ]]; then
+              echo "::error::Could not look up the PR for ${SHA}; re-run once the API recovers."
+              exit 1
+            fi
             echo "::notice::${SHA} did not come from a merged PR; nothing to release."
             exit 0
           fi
-          LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '[.labels[].name] | join(",")')
+          LABELS=$(api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '[.labels[].name] | join(",")')
           BUMP="patch"
           for label in major minor patch; do
             if [[ ",${LABELS,,}," == *",${label},"* ]]; then
