@@ -205,8 +205,11 @@ runs:
 
         # Putting swift on PATH is the point of this step; the entry is built from
         # the validated version and the runner's own tool cache.
+        # GITHUB_PATH only applies from the next step, so call this toolchain by
+        # path: a bare `swift` here is whatever the image has (hosted Ubuntu ships
+        # one; the self-hosted image has none on PATH).
         echo "${TOOLCHAIN_DIR}/usr/bin" >> "$GITHUB_PATH"
-        swift --version
+        "${TOOLCHAIN_DIR}/usr/bin/swift" --version
 
     - name: Restore SwiftPM .build cache
       id: build-cache
