@@ -216,7 +216,13 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ inputs.path }}/.build
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-swift${{ steps.install.outputs.swift-version }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-${{ runner.environment == 'self-hosted' && 'self-hosted-' || '' }}swift${{ steps.install.outputs.swift-version }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-${{ github.sha }}
+        # Self-hosted runners get keys of their own: they check out under a
+        # different path (ARC uses /home/runner/_work, hosted /home/runner/work),
+        # and Clang's module cache records absolute paths, so a hosted .build
+        # fails there with "compiled with module cache path" / "missing required
+        # module 'SwiftShims'". Hosted keys are unchanged.
+        #
         # The toolchain is in the key: another compiler's .build is useless — its
         # modules cannot be loaded — and from 6.4 on SwiftPM builds with Swift
         # Build into .build/out, so an older cache would only be dead weight
@@ -233,7 +239,7 @@ runs:
         # rather than by narrowing this key, since first-party sources change on
         # nearly every commit and keying on them would mean never reusing a cache.
         restore-keys: |
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-swift${{ steps.install.outputs.swift-version }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-${{ runner.environment == 'self-hosted' && 'self-hosted-' || '' }}swift${{ steps.install.outputs.swift-version }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
 
     # Skipped when the packages are already installed, so runner images that
     # bake them in need neither sudo nor the apt round trip.
