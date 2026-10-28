@@ -271,6 +271,14 @@ runs:
       working-directory: ${{ inputs.path }}
       env:
         LOCKED: ${{ inputs.locked-dependencies }}
+        # Self-hosted runners share one egress IP, and GitHub throttles
+        # anonymous clones per IP: past a burst every https://github.com fetch
+        # fails with "could not read Username". Fetch with the job's token there
+        # instead, which has its own, much larger allowance. Env-scoped git
+        # config, so nothing outlives the step.
+        GIT_CONFIG_COUNT: ${{ runner.environment == 'self-hosted' && '1' || '0' }}
+        GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
+        GIT_CONFIG_VALUE_0: https://github.com/
       run: |
         if [[ "$LOCKED" == "true" ]]; then
           # Without the file there is nothing to lock to, and SwiftPM would
@@ -310,6 +318,10 @@ runs:
         # Empty when this run built cold — the script only blames a cache it got.
         CACHE_MATCHED_KEY: ${{ steps.build-cache.outputs.cache-matched-key }}
         ACTION_PATH: ${{ github.action_path }}
+        # The recovery path re-resolves; same as "Resolve dependencies".
+        GIT_CONFIG_COUNT: ${{ runner.environment == 'self-hosted' && '1' || '0' }}
+        GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
+        GIT_CONFIG_VALUE_0: https://github.com/
       run: bash "$ACTION_PATH/scripts/build-with-recovery.sh"
 
     - name: Determine build output path
