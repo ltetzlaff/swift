@@ -106,7 +106,23 @@ runs:
         fi
         echo "version=${SWIFT_VERSION}" >> "$GITHUB_OUTPUT"
 
+    # Self-hosted runner images can bake the toolchain into the tool cache.
+    # Restoring the cached copy over it would only cost a download.
+    - name: Check for preinstalled Swift toolchain
+      id: preinstalled
+      shell: bash
+      env:
+        SWIFT_VERSION: ${{ steps.swift-version.outputs.version }}
+        TOOL_CACHE: ${{ runner.tool_cache }}
+      run: |
+        if [[ -x "${TOOL_CACHE}/swift-Ubuntu/${SWIFT_VERSION}/usr/bin/swift" ]]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Cache Swift toolchain
+      if: steps.preinstalled.outputs.present != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.tool_cache }}/swift-Ubuntu
@@ -216,17 +232,29 @@ runs:
         restore-keys: |
           ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ steps.install.outputs.ubuntu-version }}-${{ runner.arch }}-swift${{ steps.install.outputs.swift-version }}-${{ inputs.cache-suffix != '' && format('{0}-', inputs.cache-suffix) || '' }}${{ hashFiles(format('{0}/Package.resolved', inputs.path)) }}-
 
+    # Skipped when the packages are already installed, so runner images that
+    # bake them in need neither sudo nor the apt round trip.
     - name: Install system build dependencies
       shell: bash
+      env:
+        JEMALLOC: ${{ inputs.jemalloc }}
       run: |
+        PACKAGES=(libcurl4-openssl-dev)
+        if [[ "$JEMALLOC" == "true" ]]; then
+          PACKAGES+=(libjemalloc-dev)
+        fi
+        MISSING=()
+        for pkg in "${PACKAGES[@]}"; do
+          if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+            MISSING+=("$pkg")
+          fi
+        done
+        if (( ${#MISSING[@]} == 0 )); then
+          echo "Already installed: ${PACKAGES[*]}"
+          exit 0
+        fi
         sudo apt-get update -q
-        sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
-
-    - name: Install jemalloc
-      if: inputs.jemalloc == 'true'
-      shell: bash
-      run: |
-        sudo apt-get install -y --no-install-recommends libjemalloc-dev
+        sudo apt-get install -y --no-install-recommends "${MISSING[@]}"
 
     # ── Resolve & Normalize ────────────────────────────────────
     - name: Resolve dependencies

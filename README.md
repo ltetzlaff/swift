@@ -136,6 +136,15 @@ The reusable workflows refer to this action with `uses: $/`, so they always run
 the action from the same commit as the workflow. On self-hosted runners that
 needs runner 2.336.0 or newer.
 
+## Self-hosted runner images
+
+A runner image can bake the toolchain into
+`$RUNNER_TOOL_CACHE/swift-Ubuntu/<swift-version>` (unpacked so that
+`usr/bin/swift` sits under it). The action then skips the toolchain cache and
+download. It also skips `apt-get` when `libcurl4-openssl-dev` (and, with
+`jemalloc: true`, `libjemalloc-dev`) are already installed, so such an image
+needs no sudo.
+
 ## License
 
 MIT
